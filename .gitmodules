@@ -1,0 +1,9 @@
+[submodule "submodules/sam2"]
+	path = submodules/sam2
+	url = https://github.com/facebookresearch/sam2.git
+[submodule "submodules/lightglue"]
+	path = submodules/lightglue
+	url = https://github.com/jytime/LightGlue.git
+[submodule "submodules/vggsfm"]
+	path = submodules/vggsfm
+	url = https://github.com/facebookresearch/vggsfm
