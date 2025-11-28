@@ -7,3 +7,9 @@
 [submodule "submodules/vggsfm"]
 	path = submodules/vggsfm
 	url = https://github.com/facebookresearch/vggsfm
+[submodule "submodules/hloc"]
+	path = submodules/hloc
+	url = https://github.com/cvg/Hierarchical-Localization
+[submodule "submodules/SuperGluePretrainedNetwork"]
+	path = submodules/SuperGluePretrainedNetwork
+	url = https://github.com/magicleap/SuperGluePretrainedNetwork
