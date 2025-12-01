@@ -16,6 +16,4 @@
 [submodule "submodules/hamer"]
 	path = submodules/hamer
 	url = https://github.com/geopavlakos/hamer
-[submodule "submodules/pytorch3d"]
-	path = submodules/pytorch3d
-	url = https://github.com/facebookresearch/pytorch3d.git
+	
