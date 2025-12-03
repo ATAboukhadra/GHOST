@@ -16,13 +16,14 @@ from manopth.manolayer import ManoLayer
 from utils.gaussian_hand_helpers import initialize_gaussians_evenly, simulate_hand_texture, save_gaussians_as_ply, load_mesh_from_obj
 from utils.transformation_utils import compute_face_transformation_optimized, update_gaussians, apply_transformations
 from tqdm import tqdm
-from pytorch3d.io import save_obj
 
 import argparse
 import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument("sequence", type=str, help="Name of the sequence to process")
+parser.add_argument("--visualize", action='store_true', help="Whether to visualize intermediate results")
+parser.add_argument("--num_hands", type=int, default=1, help="Number of hands in the sequence (1 or 2)")
 args = parser.parse_args()
 
 sequences = [args.sequence]
@@ -41,7 +42,7 @@ for side in ['right', 'left']:
     is_right = int(side == 'right')
     
     for seq_name in sequences:
-        if 'arctic' not in seq_name and side == 'left':
+        if args.num_hands == 1 and side == 'left':
             continue
 
         root = f'../data/{seq_name}/{preprocess_dir}/'
@@ -63,7 +64,7 @@ for side in ['right', 'left']:
             # Mirror faces for left hand
             faces = faces[:, [2, 1, 0]]
 
-        save_obj(f"canonical_{side}.obj", canonical_verts, faces)
+        # save_obj(f"canonical_{side}.obj", canonical_verts, faces)
 
         # Initialize gaussians in canonical space
         rescale_factor = 3
@@ -71,10 +72,16 @@ for side in ['right', 'left']:
 
         for num_gaussians_per_edge in range(1, max_num_gaussians_per_edge):
             gaussians = initialize_gaussians_evenly(canonical_verts.detach(), faces, num_gaussians_per_edge, rescale_factor)
-            print(f"Initialized {len(gaussians)} Gaussians")
+            num_gaussians_per_face = (num_gaussians_per_edge * (num_gaussians_per_edge - 1)) // 2 + num_gaussians_per_edge
+            print(
+                f"Initialized {num_gaussians_per_edge} gaussians per edge, "
+                f"{num_gaussians_per_face} gaussians per face (m); "
+                f"total {len(gaussians)} gaussians per hand."
+            )
+
             all_gaussians.append(gaussians)
         
-        img_root = os.path.join(root, 'hand_rgba/')
+        img_root = os.path.join(root, f'hand_rgba_{side}/')
         num_frames = len(os.listdir(img_root))
         seq_transformations = []
         failed = False
@@ -102,12 +109,11 @@ for side in ['right', 'left']:
                 
             # Compute transformations
             transformations = compute_face_transformation_optimized(canonical_verts, deformed_verts, faces)
-            # print(transformations)
             seq_transformations.append(transformations)
             updated_verts = apply_transformations(canonical_verts, transformations, faces)
 
             # Update Gaussians
-            if frame_num % 10 == 0:
+            if frame_num % 50 == 0 and args.visualize:
                 num_gaussians_per_edge = 2
                 num_gaussians_per_face = (num_gaussians_per_edge * (num_gaussians_per_edge - 1)) // 2 + num_gaussians_per_edge
                 gaussians = all_gaussians[num_gaussians_per_edge-1]
@@ -118,8 +124,6 @@ for side in ['right', 'left']:
                 opacities = torch.ones(num_gaussians, device=device) * 0.1  # Slightly more opaque for dark skin    
                 ply_file = os.path.join(root, f"gaussians/gaussians_frame_{frame_num}_{side}.ply")
                 save_gaussians_as_ply(updated_gaussians, features_dc, features_rest, opacities, ply_file)
-                # exit()
-            # print(f"Frame {frame_num} processed and saved.")
 
         if not failed:
             seq_transformations = torch.stack(seq_transformations)

@@ -131,10 +131,10 @@ def ensure_directories(paths: Paths, visualize: bool) -> None:
         os.makedirs(paths.vis, exist_ok=True)
 
 
-def determine_optimized_list(seq_name: str) -> List[str]:
-    if seq_name in ["dfki_hand_02"]:
-        return ["right"]
-    if "arctic" in seq_name:
+def determine_optimized_list(seq_name: str, num_hands: int) -> List[str]:
+    # if seq_name in ["dfki_hand_02"]:
+    #     return ["right"]
+    if num_hands == 2:
         return ["left", "right", "object"]
     return ["right", "object"]
 
@@ -602,13 +602,13 @@ def export_aligned_hand_data(
         torch.save(left_translations_tensor, os.path.join(output_dir, "left_translations.pth"))
 
 
-def main(seq_name: str, load_prior: bool = False, apply_exp: bool = True, visualize: bool = False) -> None:
+def main(seq_name: str, load_prior: bool = False, apply_exp: bool = True, visualize: bool = False, num_hands: int = 1) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     paths = build_paths(seq_name)
 
     detection_confidences = load_detection_confidences(paths)
     ensure_directories(paths, visualize)
-    optimized_list = determine_optimized_list(seq_name)
+    optimized_list = determine_optimized_list(seq_name, num_hands)
 
     cam_intr, images, points3D, point_cloud, filtered_point_cloud, prior_meshes = load_camera_and_prior(paths, optimized_list, device, load_prior)
     mano_right, faces_right, faces_left = load_mano_layers(device)
@@ -679,5 +679,6 @@ if __name__ == "__main__":
     parser.add_argument("--load_prior", action="store_true", help="Whether to load prior mesh")
     parser.add_argument("--apply_exp", action="store_true", help="Whether to apply exponential scaling")
     parser.add_argument("--visualize", action="store_true", help="Save projected joints visualizations")
+    parser.add_argument("--num_hands", type=int, default=1, help="Number of hands to process")
     args = parser.parse_args()
-    main(args.seq_name, args.load_prior, args.apply_exp, args.visualize)
+    main(args.seq_name, args.load_prior, args.apply_exp, args.visualize, args.num_hands)
