@@ -7,26 +7,29 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("sequence", type=str, help="Name of the sequence")
+parser.add_argument("visualize", type=str, default="False", help="Whether to visualize intermediate results")
 args = parser.parse_args()
 
 seq_name = args.sequence
-img_root = f'../data/{seq_name}/build/jpg/'
+img_root = f'../data/{seq_name}/jpg/'
 
 preprocess_dir = 'ghost_build'
-hand_root_masks = f'../data/{seq_name}/{preprocess_dir}/hand_sam_masks/'
-left_hand_root_masks = f'../data/{seq_name}/{preprocess_dir}/hand_sam_masks_left/'
-obj_seg_masks = f'../data/{seq_name}/{preprocess_dir}/object_sam_masks/'
+hand_root_masks = f'../data/{seq_name}/{preprocess_dir}/hand_bin_right/'
+left_hand_root_masks = f'../data/{seq_name}/{preprocess_dir}/hand_bin_left/'
+obj_seg_masks = f'../data/{seq_name}/{preprocess_dir}/obj_bin/'
 
-out_mask_dir = f'../data/{seq_name}/{preprocess_dir}/combined_masks/'
+out_mask_dir = f'../data/{seq_name}/{preprocess_dir}/combined_bin/'
 out_rgba_dir = f'../data/{seq_name}/{preprocess_dir}/combined_rgba/'
 out_hand_rgba_dir = f'../data/{seq_name}/{preprocess_dir}/combined_hand_rgba/'
-out_color_mask_dir = f'../data/{seq_name}/{preprocess_dir}/combined_color_masks/'
-out_bkg_mask_dir = f'../data/{seq_name}/{preprocess_dir}/bkg_masks/'
+out_bkg_mask_dir = f'../data/{seq_name}/{preprocess_dir}/bkg_bin/'
+
+if eval(args.visualize):
+    out_color_mask_dir = f'../data/{seq_name}/{preprocess_dir}/combined_color_masks/'
+    os.makedirs(out_color_mask_dir, exist_ok=True)
 
 os.makedirs(out_mask_dir, exist_ok=True)
 os.makedirs(out_rgba_dir, exist_ok=True)
 os.makedirs(out_hand_rgba_dir, exist_ok=True)
-os.makedirs(out_color_mask_dir, exist_ok=True)
 os.makedirs(out_bkg_mask_dir, exist_ok=True)
 
 for frame in tqdm(sorted(os.listdir(hand_root_masks))):
@@ -78,38 +81,39 @@ for frame in tqdm(sorted(os.listdir(hand_root_masks))):
     img_hand_mask[:, :, 3] = hand_bin
     cv2.imwrite(out_hand_rgba_dir + sam_frame_name + '.png', img_hand_mask)
 
-    # -----------------------------------------------
-    # Create fun color overlay while keeping alpha
-    # -----------------------------------------------
-    rgba_img = cv2.imread(rgba_path, cv2.IMREAD_UNCHANGED)
-    rgb_base = rgba_img[:, :, :3]
-    alpha = rgba_img[:, :, 3]
+    if eval(args.visualize):
+        # -----------------------------------------------
+        # Create fun color overlay while keeping alpha
+        # -----------------------------------------------
+        rgba_img = cv2.imread(rgba_path, cv2.IMREAD_UNCHANGED)
+        rgb_base = rgba_img[:, :, :3]
+        alpha = rgba_img[:, :, 3]
 
-    # fun pastel colors (B, G, R)
-    COLOR_RIGHT_HAND = np.array([255, 153, 51], dtype=np.uint8)   # soft orange
-    COLOR_LEFT_HAND  = np.array([203, 132, 255], dtype=np.uint8)  # soft lavender
-    COLOR_OBJECT     = np.array([102, 255, 204], dtype=np.uint8)  # mint aqua
+        # fun pastel colors (B, G, R)
+        COLOR_RIGHT_HAND = np.array([255, 153, 51], dtype=np.uint8)   # soft orange
+        COLOR_LEFT_HAND  = np.array([203, 132, 255], dtype=np.uint8)  # soft lavender
+        COLOR_OBJECT     = np.array([102, 255, 204], dtype=np.uint8)  # mint aqua
 
-    # start with white
-    color_mask = np.ones_like(rgb_base, dtype=np.uint8) * 255
+        # start with white
+        color_mask = np.ones_like(rgb_base, dtype=np.uint8) * 255
 
-    # assign class colors
-    color_mask[obj_bin > 0] = COLOR_OBJECT
-    color_mask[hand_mask > 127] = COLOR_RIGHT_HAND
-    color_mask[left_hand_mask > 127] = COLOR_LEFT_HAND
+        # assign class colors
+        color_mask[obj_bin > 0] = COLOR_OBJECT
+        color_mask[hand_mask > 127] = COLOR_RIGHT_HAND
+        color_mask[left_hand_mask > 127] = COLOR_LEFT_HAND
 
-    # blend RGB with colors where alpha > 0
-    blended_rgb = rgb_base.copy()
-    alpha_mask = (alpha > 0)
-    blended_rgb[alpha_mask] = cv2.addWeighted(
-        rgb_base[alpha_mask], 0.6, color_mask[alpha_mask], 0.4, 0
-    )
+        # blend RGB with colors where alpha > 0
+        blended_rgb = rgb_base.copy()
+        alpha_mask = (alpha > 0)
+        blended_rgb[alpha_mask] = cv2.addWeighted(
+            rgb_base[alpha_mask], 0.6, color_mask[alpha_mask], 0.4, 0
+        )
 
-    # stack back with original alpha
-    blended_rgba = np.dstack((blended_rgb, alpha))
+        # stack back with original alpha
+        blended_rgba = np.dstack((blended_rgb, alpha))
 
-    # save final overlay
-    cv2.imwrite(out_color_mask_dir + sam_frame_name + '_blended_rgba.png', blended_rgba)
+        # save final overlay
+        cv2.imwrite(out_color_mask_dir + sam_frame_name + '_blended_rgba.png', blended_rgba)
 
     # -----------------------------------------------
     # Export background binary mask (1 = background, 0 = object)
