@@ -1,3 +1,5 @@
+# Adapted from HOLD
+
 import os
 import pycolmap
 import h5py
