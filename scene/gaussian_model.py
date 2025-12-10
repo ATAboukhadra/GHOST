@@ -11,43 +11,22 @@
 
 import torch
 import numpy as np
-import trimesh
-import os
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, matrix_to_quaternion, quaternion_multiply
 from torch import nn
+import os
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import build_scaling_rotation
-from preprocess.utils.transformation_utils import compute_face_transformation_optimized_batched
-from pathlib import Path
+from utils.general_utils import build_scaling_rotation, polar_decomposition
+# from lie_learn.representations.SO3.wigner_d import wigner_D_matrix
+from scipy.spatial.transform import Rotation as R
+from tqdm import tqdm
+import einops
+from .angle_helpers import transform_shs_batched
 
-def map_deform2hold(verts, scale, _normalize_shift):
-    conversion_matrix = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-    normalize_shift = _normalize_shift.copy()
-    normalize_shift[0] *= -1
-    verts = verts.cpu().numpy()
-    verts -= normalize_shift
-    verts /= scale
-    verts = np.dot(verts, conversion_matrix)
-    return torch.tensor(verts, dtype=torch.float32)
-
-
-np.bool = np.bool_
-np.int = np.int_
-np.float = np.float_
-np.str = np.str_
-np.unicode = np.unicode_
-np.object = np.object_
-np.complex = np.complex_
-
-from manopth.manolayer import ManoLayer
-torch.autograd.set_detect_anomaly(True)
-
-
-class GaussianModelMano:
+class GaussianModel:
 
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(center, scaling, scaling_modifier, rotation):
@@ -67,7 +46,7 @@ class GaussianModelMano:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int, num_pose_params : int = 45):
+    def __init__(self, sh_degree : int):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -81,6 +60,7 @@ class GaussianModelMano:
         self.denom = torch.empty(0)
         self.seen = torch.empty(0)
         self.transforms = None
+        # self.transforms2 = None
         self.right_hand_indices = None
         self.left_hand_indices = None
         self.optimizer = None
@@ -89,31 +69,10 @@ class GaussianModelMano:
         self.binding = None  # gaussian index to face index
         self.binding_counter = None  # number of points bound to each face
 
+        # self.gaussian_visibility_count = None  # (N,) int: how many frames each Gaussian is visible in
         self.object_poses = {}
+        # self.is_binding = False
 
-        # MANO Stuff
-        self.use_pca = True if num_pose_params < 45 else False
-        self.num_pose_params = num_pose_params
-        self.mano_layer = ManoLayer(mano_root='preprocess/_DATA/data/mano', use_pca=self.use_pca, ncomps=num_pose_params, flat_hand_mean=True).cuda()
-        self.pose_param_cano = torch.zeros(1, 48).cuda()
-        self.shape_param_cano = torch.zeros(1, 10).cuda()
-        self.transl_cano = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float, device=self.pose_param_cano.device).unsqueeze(0)
-        self.scale_factor = 1000
-        self.num_object_gaussians = 0
-
-        self.canonical_verts, _ = self.mano_layer(self.pose_param_cano, self.shape_param_cano, self.transl_cano)
-        self.canonical_verts = self.canonical_verts[0] / self.scale_factor  # Canonical (flat) hand vertices
-
-        self.canonical_verts_left, _ = self.mano_layer(self.pose_param_cano, self.shape_param_cano, self.transl_cano)
-        self.canonical_verts_left[:, :, 0] *= -1  # Mirror the canonical hand for left hand
-        self.canonical_verts_left = self.canonical_verts_left[0] / self.scale_factor  # Canonical (flat) left hand vertices
-
-        self.faces = self.mano_layer.th_faces  # Faces of the mesh
-        self.iou_hand = None
-        self._pose_params = None
-        self._shape_params = None
-        self.optimize_left = False
-        self.hold_pc = None
 
         self.setup_functions()
 
@@ -153,8 +112,8 @@ class GaussianModelMano:
 
     @property
     def get_scaling(self):
-        return self.scaling_activation(self._scaling)
-        
+        return self.scaling_activation(self._scaling) #.clamp(max=1)
+    
     @property
     def get_rotation(self):
         return self.rotation_activation(self._rotation)
@@ -222,16 +181,6 @@ class GaussianModelMano:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
-        if self._pose_params is not None:
-            print("Optimizing MANO Params ..")
-            # l.append({'params': [self._pose_params], 'lr': training_args.pose_lr, "name": "mano_pose"})
-            # l.append({'params': [self._shape_params], 'lr': training_args.shape_lr, "name": "mano_shape"})
-            l.append({'params': [self._transl], 'lr': training_args.transl_lr, "name": "mano_transl"})
-
-            if self.optimize_left:
-                # l.append({'params': [self._pose_params_left], 'lr': training_args.pose_lr, "name": "mano_pose_left"})
-                l.append({'params': [self._transl_left], 'lr': training_args.transl_lr, "name": "mano_transl_left"})
-
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
@@ -260,14 +209,8 @@ class GaussianModelMano:
             l.append('rot_{}'.format(i))
         return l
 
-    def save_ply(self, path, save_cano=False, frame_num=-1):
-        # print(os.path.dirname(path))
+    def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
-        # return
-        if frame_num >= 0:
-            # just write a txt file with the frame number
-            with open(f"{path[:-4]}_{frame_num}.txt", 'w') as f:
-                f.write(str(frame_num))
 
         xyz = self._xyz.detach().cpu().numpy()
         # xyz = self.update_gaussians_position().detach().cpu().numpy()#saving current deformed hand
@@ -289,12 +232,11 @@ class GaussianModelMano:
         PlyData([el]).write(path)
 
         # saving only the canonical hand
-        if save_cano:
-            cano_attributes = attributes[self.right_hand_indices]
-            elements = np.empty(cano_attributes.shape[0], dtype=dtype_full)
-            elements[:] = list(map(tuple, cano_attributes))
-            el = PlyElement.describe(elements, 'vertex')   
-            PlyData([el]).write(path[:-4]+"_canonical.ply")     
+        # cano_attributes = attributes[self.right_hand_indices]
+        # elements = np.empty(cano_attributes.shape[0], dtype=dtype_full)
+        # elements[:] = list(map(tuple, cano_attributes))
+        # el = PlyElement.describe(elements, 'vertex')   
+        # PlyData([el]).write(path[:-4]+"_canonical.ply")     
         
         #saving current deformed hand
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
@@ -303,13 +245,13 @@ class GaussianModelMano:
         # attributes = np.concatenate((self.get_gaussians_position().detach().cpu().numpy(), normals, f_dc, 
         #                              self.rotate_sh_batched().detach().cpu().numpy().reshape(len(self._xyz), -1), opacities, scale, 
         #                              self.get_gaussians_rotation().detach().cpu().numpy()), axis=1)
+        # print(opacities[-30083:])
         attributes = np.concatenate((self.get_gaussians_position().detach().cpu().numpy(), normals, f_dc, f_rest, opacities, scale, self.get_gaussians_rotation().detach().cpu().numpy()), axis=1)
 
         elements[:] = list(map(tuple, attributes))
-
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path[:-4]+"_deformed.ply")#"point_cloud.ply"
         if self.binding is None:
-            el = PlyElement.describe(elements, 'vertex')
-            PlyData([el]).write(path[:-4]+"_object.ply")
             return
 
         def save_subset(mask, suffix):
@@ -318,34 +260,20 @@ class GaussianModelMano:
             el = PlyElement.describe(elements, 'vertex')
             PlyData([el]).write(f"{path[:-4]}_{suffix}.ply")
 
+        
         binding_cpu = self.binding.detach().cpu().numpy()
         num_faces_per_hand = 1538  # adjust based on MANO
 
         is_right = (binding_cpu >= 0) & (binding_cpu < num_faces_per_hand)
-        is_left = (binding_cpu >= num_faces_per_hand) & (binding_cpu < 2 * num_faces_per_hand)
+        # is_left = (binding_cpu >= num_faces_per_hand) & (binding_cpu < 2 * num_faces_per_hand)
         is_object = (binding_cpu == self.identity_binding_index)
 
-        save_subset(is_right, "right_hand")
-        save_subset(is_left, "left_hand")
+        # save_subset(is_right, "right_hand")
+        # save_subset(is_left, "left_hand")
         save_subset(is_object, "object")
-        save_subset(is_right | is_left | is_object, "all")
 
         # Save binding list for reference
         np.save(f"{path[:-4]}_binding.npy", binding_cpu)
-
-        # Save mano parameters if they exist
-        if self._pose_params is not None:
-            mano_params = {
-                "pose": self._pose_params.detach().cpu(),
-                "shape": self._shape_params.detach().cpu(),
-                "transl": self._transl.detach().cpu(),
-                "pose_left": self._pose_params_left.detach().cpu() if self.optimize_left else None,
-                "transl_left": self._transl_left.detach().cpu() if self.optimize_left else None,
-            }
-            for key, value in mano_params.items():
-                if value is not None:
-                    mano_path = Path(path).parent / f"{Path(path).stem}_{key}.pt"
-                    torch.save(value, mano_path)
 
     def reset_opacity(self):
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
@@ -354,11 +282,12 @@ class GaussianModelMano:
 
     def load_ply(self, path, hand=False):
         plydata = PlyData.read(path)
-        self.spatial_lr_scale = 1.0
+        # print(path)
 
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
+        # print(hand, "xyz shape", xyz.shape)
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
@@ -378,10 +307,9 @@ class GaussianModelMano:
             #max_radii2D is not restored from checkpoint for now
             max_radii2D = torch.zeros((xyz.shape[0]), device="cuda")
             # Object binding
-            self.num_object_gaussians = xyz.shape[0]
-            object_binding = torch.full((self.num_object_gaussians,), self.identity_binding_index, device="cuda", dtype=torch.int32)
+            num_object_gaussians = xyz.shape[0]
+            object_binding = torch.full((num_object_gaussians,), self.identity_binding_index, device="cuda", dtype=torch.int32)
             self.binding = torch.cat((self.binding, object_binding), dim=0)
-            self.object_gaussians_mask = self.binding == self.identity_binding_index
 
         else:
             features_extra = np.zeros((xyz.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
@@ -406,9 +334,10 @@ class GaussianModelMano:
         rots = np.zeros((xyz.shape[0], len(rot_names)))
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
-
+        ##########################################################################TODO temp for when .ply is created with rotation matrix instead of quad
         if hand:
             rots = matrix_to_quaternion(torch.from_numpy(rots.reshape(-1, 3, 3))).numpy()
+        ##########################################################################TODO temp for when .ply is created with rotation matrix instead of quad
 
         if len(self._xyz) == 0:
             self._xyz = torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True)
@@ -449,11 +378,8 @@ class GaussianModelMano:
     
         if self.transforms == None:
             self.transforms = torch.load(path)#[T, F, 4, 4], with T=#frames, f=#faces
-            self.load_mano_params(path, "right")
         else:
-            self.transforms = torch.cat((self.transforms[:, :-1], torch.load(path)), dim=1)
-            self.load_mano_params(path, "left")
-
+            self.transforms = torch.cat((self.transforms, torch.load(path)), dim=1)
             self.binding = torch.cat((self.binding, torch.arange(self.limit1, self.limit2, device="cuda", dtype=torch.int32) // self.num_gaussians_per_face), dim=0)
             self.binding_counter = torch.cat((self.binding_counter, torch.ones(num_hand_faces, dtype=torch.int32, device="cuda") * int(self.num_gaussians_per_face)), dim=0)
 
@@ -463,7 +389,6 @@ class GaussianModelMano:
         self.identity_binding_index = self.transforms.shape[1] - 1  # This is the index of the identity transform
 
     def set_image_transform(self, image_id, cam):
-
         W2C = np.eye(4)
         W2C[:3, :3] = np.transpose(cam.R)#R is C2W
         W2C[:3,  3] = cam.T#T is W2C
@@ -474,11 +399,8 @@ class GaussianModelMano:
         self.transforms_image = torch.matmul(C2W, self.transforms_image)
         # Replace the object transformation with identity
         object_gaussians_mask = self.binding == self.identity_binding_index
-
-        with torch.no_grad():
-            num_object_gaussians = int(object_gaussians_mask.sum().item())
-            self.transforms_image[object_gaussians_mask] = torch.eye(4, device=self.transforms_image.device).unsqueeze(0).repeat(num_object_gaussians, 1, 1)
-
+        self.transforms_image[object_gaussians_mask] = torch.eye(4, device=self.transforms_image.device).unsqueeze(0).repeat(object_gaussians_mask.sum(), 1, 1)
+        # print(self.transforms_image)
         self.transforms_image_quat = matrix_to_quaternion(self.transforms_image[:, :3, :3])
         
         self.is_grasping = False
@@ -512,11 +434,18 @@ class GaussianModelMano:
                 angle_deg = torch.rad2deg(angle_rad)
 
                 if angle_deg > 1.0:
+                    # print(f'object is moving {image_id}:', angle_deg)
                     return True
                 else:
+                    # print(f'object is not moving {image_id}:', angle_deg)
                     return False
 
+                # print(f'difference in transformation {image_id}:', diff_transformation)
+                # Check if the difference is significant i.e. if the object is moving
+                # compute how close to identity the transformation is
+
     def get_sh(self):
+        # print(self.active_sh_degree)
         if self.transforms is not None and self.active_sh_degree <= 3:
             features = self.rotate_sh_batched()
             features = torch.cat((self._features_dc, features), dim=1)
@@ -531,11 +460,11 @@ class GaussianModelMano:
             Ms, translations = self.transforms_image[:, :3, :3], self.transforms_image[:, :3, 3:]  # [N, 3, 3], [N, 3, 1]
             xyz = (Ms @ self._xyz.unsqueeze(-1) + translations).squeeze(-1)
             # Compute the hand center using the binding
-            # self.object_center = torch.mean(xyz[self.binding == self.identity_binding_index], dim=0, keepdim=True)
-            # self.hand_center = torch.mean(xyz[self.binding != self.identity_binding_index], dim=0, keepdim=True)
+            self.object_center = torch.mean(xyz[self.binding == self.identity_binding_index], dim=0, keepdim=True)
+            self.hand_center = torch.mean(xyz[self.binding != self.identity_binding_index], dim=0, keepdim=True)
+            # print(hand_center, object_center)
 
             return xyz
-        
         return self._xyz
     
     def get_gaussians_rotation(self):
@@ -544,17 +473,17 @@ class GaussianModelMano:
             return quad
         return self._rotation
 
-    # def rotate_sh_batched(self):
-    #     # Convert quaternions to rotation matrices
-    #     R_matrices = np.stack([
-    #         R.from_quat(q.detach().cpu().numpy()).as_matrix()
-    #         for q in self.transforms_image_quat
-    #     ], axis=0)  # (N, 3, 3)
+    def rotate_sh_batched(self):
+        # Convert quaternions to rotation matrices
+        R_matrices = np.stack([
+            R.from_quat(q.detach().cpu().numpy()).as_matrix()
+            for q in self.transforms_image_quat
+        ], axis=0)  # (N, 3, 3)
 
-    #     R_matrices = torch.from_numpy(R_matrices).to(self._features_rest.device, dtype=self._features_rest.dtype)
+        R_matrices = torch.from_numpy(R_matrices).to(self._features_rest.device, dtype=self._features_rest.dtype)
 
-    #     rotated = transform_shs_batched(self._features_rest, R_matrices)
-    #     return rotated
+        rotated = transform_shs_batched(self._features_rest, R_matrices)
+        return rotated
 
     # def get_gaussians_sh(self):
     #     if self.transforms is not None:
@@ -576,11 +505,6 @@ class GaussianModelMano:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if 'mano' in group["name"]:
-                # These parameters are not extended, so we skip them
-                optimizable_tensors[group["name"]] = group["params"][0]
-                continue
-
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
                 stored_state["exp_avg"] = torch.zeros_like(tensor)
@@ -596,11 +520,6 @@ class GaussianModelMano:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if 'mano' in group["name"]:
-                # These parameters are not extended, so we skip them
-                optimizable_tensors[group["name"]] = group["params"][0]
-                continue
-
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
@@ -671,15 +590,9 @@ class GaussianModelMano:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if 'mano' in group["name"]:
-                # These parameters are not extended, so we skip them
-                optimizable_tensors[group["name"]] = group["params"][0]
-                continue
-
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group['params'][0], None)
-
             if stored_state is not None:
 
                 stored_state["exp_avg"] = torch.cat((stored_state["exp_avg"], torch.zeros_like(extension_tensor)), dim=0)
@@ -694,21 +607,17 @@ class GaussianModelMano:
                 group["params"][0] = nn.Parameter(torch.cat((group["params"][0], extension_tensor), dim=0).requires_grad_(True))
                 optimizable_tensors[group["name"]] = group["params"][0]
 
-
         return optimizable_tensors
 
     def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation):
-        d = {
-            "xyz": new_xyz,
-            "f_dc": new_features_dc,
-            "f_rest": new_features_rest,
-            "opacity": new_opacities,
-            "scaling" : new_scaling,
-            "rotation" : new_rotation
-        }
+        d = {"xyz": new_xyz,
+        "f_dc": new_features_dc,
+        "f_rest": new_features_rest,
+        "opacity": new_opacities,
+        "scaling" : new_scaling,
+        "rotation" : new_rotation}
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
-        
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
@@ -737,7 +646,7 @@ class GaussianModelMano:
         means = torch.zeros_like(stds)
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_gaussians_position()[selected_pts_mask].repeat(N, 1)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N, 1) / (0.8 * N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N, 1, 1)
@@ -782,20 +691,21 @@ class GaussianModelMano:
         
         if self.transforms is not None: # In case of HO
             # print(self.binding == self.identity_binding_index, self.binding.shape)
-            grads[self.binding == self.identity_binding_index] = 0.0
-            # grads[:] = 0.0
+            # grads[self.binding == self.identity_binding_index] = 0.0
+            grads[:] = 0.0
 
-        # Only if number of gaussians is less than 100k
-        if self.get_xyz.shape[0] < 100000:
-            self.densify_and_clone(grads, max_grad, extent)
-            self.densify_and_split(grads, max_grad, extent)
+        self.densify_and_clone(grads, max_grad, extent)
+        self.densify_and_split(grads, max_grad, extent)
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
-
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+        # if self.limit2 == 0:
+        #     prune_mask[:self.limit1] = False
+        # else:
+        #     prune_mask[:self.limit2] = False
 
         if self.transforms is not None: # In case of HO
             prune_mask = torch.zeros_like(prune_mask, dtype=torch.bool) # keep all points for HO
@@ -803,9 +713,8 @@ class GaussianModelMano:
         # Keep object points
         if self.binding is not None:
             prune_mask[self.binding == self.identity_binding_index] = False
-        
-        if self.get_xyz.shape[0] > 1000:
-            self.prune_points(prune_mask)
+
+        self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
 
@@ -819,188 +728,3 @@ class GaussianModelMano:
     def clear_seen_status(self):
         self.seen = torch.zeros(self.seen.shape[0], device="cuda", dtype=torch.bool, requires_grad=False)
 
-    # MANO Stuff
-    def load_mano_params(self, path, side="right"):
-        # replace {side}_transformations.pth with pose_params_{side}.pt
-        pose_path = path.replace(f"{side}_transformations.pth", f"pose_params_{side}_final.pt")
-        mano_pose_param = torch.load(str(pose_path)).float().cuda()#.requires_grad_()
-        mano_pose_param = mano_pose_param.clone().detach().requires_grad_()#.cuda()
-        num_frames = mano_pose_param.shape[0]
-
-        shape_path = path.replace(f"{side}_transformations.pth", f"shape_params_right_final.pt") # The same shape params for both hands
-        shape_param = torch.load(str(shape_path)).float().cuda()#.requires_grad_()
-        shape_param_init = shape_param.clone().detach()
-        shape_param = shape_param.clone().detach().requires_grad_()#.cuda()
-
-        transl_path = path.replace(f"transformations", f"translations")
-        transl = torch.load(str(transl_path)).reshape(-1, 3).float().cuda()#.requires_grad_()
-        transl = transl.clone().detach().requires_grad_()#.cuda()
-        
-        if side == "right":
-            self._pose_params = nn.Parameter(mano_pose_param)
-            self._transl = nn.Parameter(transl)
-            # Reinitialize canonical verts with the loaded shape params
-            self.canonical_verts, _ = self.mano_layer(self.pose_param_cano, shape_param_init, self.transl_cano) 
-            self.canonical_verts = self.canonical_verts[0] / self.scale_factor  # Canonical (flat) hand vertices
-
-        else:
-            self._pose_params_left = nn.Parameter(mano_pose_param)
-            self._transl_left = nn.Parameter(transl)
-            self.canonical_verts_left, _ = self.mano_layer(self.pose_param_cano, shape_param_init, self.transl_cano)
-            self.canonical_verts_left[:, :, 0] *= -1  # Mirror the canonical hand for left hand
-            self.canonical_verts_left = self.canonical_verts_left[0] / self.scale_factor  # Canonical (flat) left hand vertices
-            self.optimize_left = True
-        
-        # Use the same shape params for both hands
-        self._shape_params = nn.Parameter(shape_param)
-
-    def update_hand_transformations(self):
-
-        num_frames = self.transforms.shape[0]
-        deformed_verts, _ = self.mano_layer(self._pose_params, self._shape_params.repeat(num_frames, 1), self._transl)
-        deformed_verts = deformed_verts / self.scale_factor  # Canonical (flat) hand vertices
-
-        transformations = compute_face_transformation_optimized_batched(self.canonical_verts, deformed_verts, self.faces)
-
-        if self.optimize_left:
-            deformed_verts_left, _ = self.mano_layer(self._pose_params_left, self._shape_params.repeat(num_frames, 1), self._transl_left)
-            deformed_verts_left[:, :, 0] = -deformed_verts_left[:, :, 0]  # Mirror the canonical hand for left hand
-            deformed_verts_left = deformed_verts_left / self.scale_factor  # Canonical (flat) left hand vertices
-            transformations_left = compute_face_transformation_optimized_batched(self.canonical_verts_left, deformed_verts_left, self.faces)
-            transformations = torch.cat((transformations, transformations_left), dim=1)  # [T, F*2, 4, 4]
-
-        identity = torch.eye(4, device="cuda").unsqueeze(0).repeat(num_frames, 1, 1).unsqueeze(1)
-
-        # compare this with old transforms
-        self.transforms = torch.cat((transformations, identity), dim=1) # [T, F*2+1, 4, 4]
-
-    @torch.no_grad()
-    def export_submission_outputs(self, cam, seq_name):
-
-        SEQUENCE_TO_SHIFT_SCALE = { # HOLD related values required for submission
-            "arctic_s03_box_grab_01_1": (np.array([-0.07795634, 0.22807714, 2.49349689]), 1.2525596618652344),
-            "arctic_s03_notebook_grab_01_1": (np.array([-0.03239906, 0.15758559, 1.84788918]), 0.9274397492408752),
-            "arctic_s03_laptop_grab_01_1": (np.array([-0.04400319, 0.20229244, 0.30538869]), 0.18447273969650269),
-            "arctic_s03_ketchup_grab_01_1": (np.array([-0.09286293, 0.11386055, 0.58659148]), 0.3023563027381897),
-            "arctic_s03_espressomachine_grab_01_1": (np.array([-0.13647562, 0.1287374, 3.27741623]), 1.6413909196853638),
-            "arctic_s03_microwave_grab_01_1": (np.array([0.02537658, 0.15653569, 2.42339349]), 1.2142882347106934),
-            "arctic_s03_waffleiron_grab_01_1": (np.array([-0.08380565, 0.11460939, 2.25544786]), 1.1299561262130737),
-            "arctic_s03_mixer_grab_01_1": (np.array([-0.06304927, 0.13679582, 3.52100658]), 1.7621134519577026),
-            "arctic_s03_capsulemachine_grab_01_1": (np.array([-0.11495478, 0.15422642, 1.283813]), 0.6490716934204102),
-        }
-
-        if seq_name not in SEQUENCE_TO_SHIFT_SCALE:
-            # print(f"Sequence {seq_name} not found in SEQUENCE_TO_SHIFT_SCALE mapping.")
-            scale = None
-            # raise ValueError(f"Sequence {seq_name} not found in SEQUENCE_TO_SHIFT_SCALE mapping.")
-        else:
-            normalize_shift, inverse_scale = SEQUENCE_TO_SHIFT_SCALE[seq_name]
-            scale = 1.0 / inverse_scale
-
-        image_path = f"./data/{seq_name}/build/image/{cam.image_name}.png"
-        frame_num = int(cam.image_name)
-
-        self.set_image_transform(frame_num, cam)
-
-        # Right hand (already in camera space)
-        verts_right, joints_right = self.mano_layer(self._pose_params[frame_num:frame_num+1],
-                                                    self._shape_params.repeat(1, 1),
-                                                    self._transl[frame_num:frame_num+1])
-        verts_right = verts_right[0] / self.scale_factor
-        joints_right = joints_right[0] / self.scale_factor
-        joints_right_centered = joints_right - joints_right[0:1]
-        if scale is not None:
-            verts_right_hold = map_deform2hold(verts_right, scale, normalize_shift)
-
-        # Left hand (already in camera space)
-        if self.optimize_left:
-            verts_left, joints_left = self.mano_layer(self._pose_params_left[frame_num:frame_num+1],
-                                                    self._shape_params.repeat(1, 1),
-                                                    self._transl_left[frame_num:frame_num+1])
-            verts_left[:, :, 0] *= -1
-            joints_left[:, :, 0] *= -1 
-
-            verts_left = verts_left[0] / self.scale_factor
-            joints_left = joints_left[0] / self.scale_factor
-            joints_left_centered = joints_left - joints_left[0:1]
-        else:
-            verts_left = torch.zeros((778, 3), device=verts_right.device)
-            joints_left_centered = torch.zeros((21, 3), device=verts_right.device)
-
-        # Convert object Gaussians from world to camera space
-        obj_mask = self.binding == self.identity_binding_index
-        obj_world = self.get_gaussians_position()[obj_mask]
-
-        W2C = torch.eye(4, device="cuda")
-        W2C[:3, :3] = torch.from_numpy(cam.R.T).float().to(W2C.device)
-        W2C[:3, 3] = torch.from_numpy(cam.T).float().to(W2C.device)
-
-        ones = torch.ones((obj_world.shape[0], 1), device=obj_world.device)
-        obj_world_homo = torch.cat([obj_world, ones], dim=-1)  # (N, 4)
-        obj_cam = (W2C @ obj_world_homo.T).T[:, :3]  # (N, 3)
-
-        if scale is not None:
-            obj_cam_hold = map_deform2hold(obj_cam, scale, normalize_shift)
-
-        # Relative to hand roots
-        v3d_right_object = obj_cam - joints_right[0:1]
-        v3d_left_object = obj_cam - (joints_left[0:1] if self.optimize_left else joints_right[0:1])
-
-        # Extra required outputs
-        faces_np_left = self.mano_layer.th_faces[:, [0, 2, 1]].cpu().numpy()  # Convert to numpy for trimesh
-        faces_np_right = self.mano_layer.th_faces.cpu().numpy()
-        canonical_verts_left, _ = self.mano_layer(self.pose_param_cano, self._shape_params.repeat(1, 1), self.transl_cano)
-        canonical_verts_left[:, :, 0] *= -1  # Mirror the canonical hand for left hand
-        canonical_verts_left = canonical_verts_left[0] / self.scale_factor  # Canonical (flat) left hand vertices
-        
-        root_object = obj_cam.mean(dim=0)
-        obj_cam_centered = obj_cam - root_object
-
-        final_dict = {
-            'image_path': image_path,
-            'v_posed.left': canonical_verts_left.unsqueeze(0),  # Posed left hand vertices
-
-            'v3d_c.right': verts_right.unsqueeze(0),
-            'v3d_c.object': obj_cam.unsqueeze(0),
-            'j3d_c.right': joints_right.unsqueeze(0),
-
-            'root.right': joints_right[0:1],  # Root joint for right hand
-            'j3d_ra.right': joints_right_centered.unsqueeze(0),
-            'root.object': root_object.unsqueeze(0),  # Root joint for the object
-            'v3d_ra.object': obj_cam_centered.unsqueeze(0),  # Relative to root joint of the object
-            
-            'v3d_right.object': v3d_right_object.unsqueeze(0),
-            
-            'faces': {
-                'left': torch.tensor(faces_np_left, dtype=torch.int16),  # Left hand faces
-                'right': torch.tensor(faces_np_right, dtype=torch.int16),  # Right hand faces
-                'object': torch.tensor([[0, 1, 2]], dtype=torch.int16)  # No object faces, but can be added if needed
-            }    
-        }
-
-        if self.optimize_left:
-            final_dict['v3d_c.left'] = verts_left.unsqueeze(0)  # Canonical left hand vertices
-            final_dict['j3d_c.left'] = joints_left.unsqueeze(0)  # Canonical left hand joints
-            final_dict['root.left'] = joints_left[0:1]  # Root joint for left hand
-            final_dict['j3d_ra.left'] = joints_left_centered.unsqueeze(0)
-            final_dict['v3d_left.object'] = v3d_left_object.unsqueeze(0)
-
-        if scale is not None:
-            final_dict['verts.right'] = verts_right_hold.unsqueeze(0)  # Right hand vertices in hold space
-            final_dict['verts.object'] = obj_cam_hold.unsqueeze(0)  # Object vertices in hold space
-
-        return final_dict
-
-    def load_prior(self, path):
-        # Load and .obj prior point cloud
-        mesh = trimesh.load(path, force='mesh')
-        if mesh.vertices.shape[0] < 5000:
-            pts_np, face_idx = trimesh.sample.sample_surface(mesh, 5000)
-            trimesh_points = trimesh.PointCloud(pts_np)
-            trimesh_points.export(path.replace('.obj', '_sampled.ply'), file_type='ply')
-            verts = torch.tensor(pts_np, dtype=torch.float32, device="cuda")
-        else:
-            verts = torch.tensor(mesh.vertices, dtype=torch.float32, device="cuda")
-
-        # Export the sampled points to a .ply file
-        self.obj_prior_pc = verts

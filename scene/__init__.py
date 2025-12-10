@@ -41,8 +41,8 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
-        if os.path.exists(os.path.join(args.source_path, "sparse")) and args.images != "hand_rgba":
-            print(args.source_path, args.images)
+        if os.path.exists(os.path.join(args.source_path, "sfm_rescaled")) and args.images != "hand_rgba":
+            # print(args.source_path, args.images)
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, bkg_images=args.background_ignore_mask)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("[SCENE] Found transforms_train.json file, assuming Blender data set!")
@@ -84,7 +84,7 @@ class Scene:
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud_deformed.ply"))#TODO maybe optionally try loading a pruned point cloud
+                                                           "point_cloud_deformed.ply"))
         else:
             if args.hand == 'none':
                 print("[SCENE] Creating Gaussians from SfM point cloud")
