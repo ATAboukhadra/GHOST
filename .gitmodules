@@ -16,7 +16,6 @@
 [submodule "submodules/hamer"]
 	path = submodules/hamer
 	url = https://github.com/geopavlakos/hamer
-	
 [submodule "submodules/openshape"]
 	path = submodules/openshape
 	url = https://huggingface.co/OpenShape/openshape-demo-support
