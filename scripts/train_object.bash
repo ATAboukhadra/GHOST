@@ -16,7 +16,7 @@ python ./train.py \
     --save_iterations 15000 30000 \
     --lambda_background 0.3 \
     --eval \
-    --background_ignore_mask hand_rgba \
+    --background_ignore_mask combined_hand_rgba \
     # --use_obj_prior \
     # --lambda_geo 10.0 \
     # --tau_out 0.02 \

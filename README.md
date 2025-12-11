@@ -131,6 +131,7 @@ bash scripts/train_object.bash arctic_s03_box_grab_01_1
 bash scripts/train_combined.bash arctic_s03_box_grab_01_1
 ```
 
+You can visualize output point clouds on [SuperSplat](https://superspl.at/editor)
 
 ## Acknowledgements
 

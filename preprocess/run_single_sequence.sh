@@ -27,8 +27,8 @@ HAND_PIXELS=""
 TEXT_PROMPT=""
 SFM_METHOD="vggsfm"     # options: vggsfm | hloc
 WINDOW_SIZE=30          # sliding window size for HLOC
-USE_PRIOR=true          # whether to align with object prior
-VISUALIZE=false         # optional flag
+USE_PRIOR=false          # whether to align with object prior
+VISUALIZE=False         # optional flag (This should stay uppercase while the others are lowercase)
 
 # --------------------------- PARSE ARGUMENTS --------------------------
 
@@ -42,7 +42,7 @@ while [[ "$#" -gt 0 ]]; do
         --sfm) SFM_METHOD="$2"; shift ;;           # vggsfm or hloc
         --window) WINDOW_SIZE="$2"; shift ;;
         --use_prior) USE_PRIOR="$2"; shift ;;
-        --visualize) VISUALIZE=true ;;
+        --visualize) VISUALIZE="$2"; shift ;;
         *) echo "❌ Unknown parameter: $1"; exit 1 ;;
     esac
     shift
@@ -71,70 +71,74 @@ seq_start=$(date +%s)
 
 # ----------------------------- STEP 1 -----------------------------------
 echo "1️⃣  SAM Object Segmentation"
-python sam_object.py "$SEQ" $OBJ_POINTS
+# python sam_object.py "$SEQ" $OBJ_POINTS
 
 # ----------------------------- STEP 2 -----------------------------------
 echo "2️⃣  Structure-from-Motion"
 
-if [[ "$SFM_METHOD" == "vggsfm" ]]; then
-    echo " - Using VGG-SfM"
-    python vggsfm_video.py SCENE_DIR=../data/"$SEQ" init_window_size=$WINDOW_SIZE window_size=$WINDOW_SIZE \
-                        camera_type="SIMPLE_PINHOLE" query_method="sp+sift" #max_query_pts=512
-else
-    echo " - Using HLOC with sliding window: $WINDOW_SIZE"
-    # python hloc_estimation.py \
-    #     --seq "$SEQ" \
-    #     --window $WINDOW_SIZE \
-    #     --no_vis
-fi
+# if [[ "$SFM_METHOD" == "vggsfm" ]]; then
+#     echo " - Using VGG-SfM"
+#     python vggsfm_video.py SCENE_DIR=../data/"$SEQ" init_window_size=$WINDOW_SIZE window_size=$WINDOW_SIZE \
+#                         camera_type="SIMPLE_PINHOLE" query_method="sp+sift" #max_query_pts=512
+# else
+#     echo " - Using HLOC with sliding window: $WINDOW_SIZE"
+#     python hloc_colmap_sfm.py  --seq_name "$SEQ" --num_pairs 50 --window_size $WINDOW_SIZE
+# fi
 
 # ----------------------------- STEP 3 -----------------------------------
-echo "3️⃣  HAMER Hand Fitting"
-# python hamer_video.py --model wilor \
-#     --img_folder "../data/${SEQ}/build/image/" \
-#     --out_folder "../data/${SEQ}/gs_preprocessing/" \
-#     --save_mesh
+echo "3️⃣  Running HAMER hand reconstruction"
+[ "$VISUALIZE" = "True" ] && VIS_FLAG="--visualize" || VIS_FLAG=""
+# python hamer_video.py --checkpoint ./_DATA/hamer_ckpts/checkpoints/hamer.ckpt \
+#     --save_mesh --img_folder "../data/${SEQ}/images/" \
+#     --out_folder "../data/${SEQ}/ghost_build/" \
+#     --bb_area 0.006 --bb_iou 0.3 --bb_conf 0.3 \
+#     $VIS_FLAG
 
 # ----------------------------- STEP 4 -----------------------------------
 echo "4️⃣  SAM Hand Segmentation"
 
-IFS=',' read -r h1x h1y h2x h2y <<< "$HAND_PIXELS"
+# IFS=',' read -r h1x h1y h2x h2y <<< "$HAND_PIXELS"
 
-if [[ "$NUM_HANDS" -eq 2 ]]; then
-    echo " - Running 2-hand segmentation"
-    # python sam_hand_pixel.py "$SEQ" "$h1x" "$h1y" 1
-    # python sam_hand_pixel.py "$SEQ" "$h2x" "$h2y" 0
-else
-    echo " - Running 1-hand segmentation"
-    # python sam_hand_pixel.py "$SEQ" "$h1x" "$h1y" 1
-fi
+# if [[ "$NUM_HANDS" -eq 2 ]]; then
+#     echo " - Running 2-hand segmentation"
+#     python sam_hand.py "$SEQ" "$h1x" "$h1y" 1
+#     python sam_hand.py "$SEQ" "$h2x" "$h2y" 0
+# else
+#     echo " - Running 1-hand segmentation"
+#     python sam_hand.py "$SEQ" "$h1x" "$h1y" 1
+# fi
 
 # ----------------------------- STEP 5 -----------------------------------
 echo "5️⃣  Combining masks"
-# python combine_masks.py "$SEQ"
+# python combine_masks.py "$SEQ" "$VISUALIZE"
 
 # ----------------------------- STEP 6 -----------------------------------
-if [[ -n "$TEXT_PROMPT" ]]; then
-    echo "6️⃣  Retrieving prior using text prompt"
-    echo " - Prompt: $TEXT_PROMPT"
-    # python retrieve.py "$SEQ" --text "$TEXT_PROMPT" --topk 20
-fi
+# if [[ -n "$TEXT_PROMPT" && "$USE_PRIOR" == true ]]; then
+#     conda activate openshape
+#     echo "6️⃣  Retrieving prior using text prompt"
+#     echo " - Prompt: $TEXT_PROMPT"
+#     python retrieve_prior.py "$SEQ" --text "$TEXT_PROMPT" --topk 10
+#     conda activate ghost
+# else
+#     echo "6️⃣  Skipping prior retrieval"
+# fi
 
 # ----------------------------- STEP 7 -----------------------------------
-if [[ "$USE_PRIOR" == true ]]; then
-    echo "7️⃣  Aligning point cloud with geometric prior"
-    # python align_object.py --seq_name "$SEQ"
-else
-    echo "7️⃣  Skipping prior alignment"
-fi
+# if [[ "$USE_PRIOR" == true ]]; then
+#     echo "7️⃣  Aligning point cloud with geometric prior"
+#     python align_prior.py --seq_name "$SEQ" --k 10 $VIS_FLAG
+# else
+#     echo "7️⃣  Skipping prior alignment"
+# fi
 
 # ----------------------------- STEP 8 -----------------------------------
-echo "8️⃣  Refining scale and MANO translations"
-# python refine_scale_ho.py --seq_name "$SEQ" --apply_exp
+# echo "8️⃣  Refining scale and MANO translations"
+# [ "$USE_PRIOR" = true ] && PRIOR_FLAG="--load_prior" || PRIOR_FLAG=""
+# python optim_scale_transl.py --seq_name "$SEQ" --apply_exp $VIS_FLAG $PRIOR_FLAG --num_hands $NUM_HANDS
 
 # ----------------------------- STEP 9 -----------------------------------
 echo "9️⃣  Animating hand Gaussians"
-python animate_hand_gaussian.py "$SEQ"
+python animate_hand_gaussian.py "$SEQ" $VIS_FLAG --num_hands $NUM_HANDS
 
 seq_end=$(date +%s)
 duration=$((seq_end - seq_start))
