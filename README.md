@@ -26,6 +26,10 @@ pip install --no-build-isolation submodules/diff-surfel-rasterization
 pip install --no-build-isolation submodules/simple-knn
 ```
 
+If you plan to use VGGSfM use `pip install pycolmap==3.10.0`
+If you plan to use HLoc use `pip install pycolmap==3.13.0`
+Can't use both in the same environment (You can create a separate environment for vggsfm)
+
 Optional for retrieving geometric priors and object templates from OpenShape
 ```
 conda create -n openshape python=3.10 -y
@@ -35,6 +39,8 @@ pip install dgl -f https://data.dgl.ai/wheels/torch-2.4/cu124/repo.html
 pip install torch.redstone einops objaverse timm==0.9.12 transformers==4.44.0 open3d
 pip install -e submodules/openshape
 ```
+
+
 
 Install 2D-Gaussian-Splatting Repo
 
@@ -89,14 +95,15 @@ You can use `preprocess/internvl.py` in case you want to generate a text descrip
 Example for single hand
 
 ```
+# add the text description of the object in --prompt. Leave empty if you dont want any geometric priors.
 bash run_single_sequence.sh \
     --seq dfki_drill_03 \
     --obj_points "+694,316" \
     --hands 1 \
     --hand_pixels "1381,805" \
-    --prompt "drill" \ # add the text description of the object here. Leave empty if you dont want any geometric priors.
+    --prompt "drill" \ 
     --sfm hloc \
-    --window 50 \
+    --window 100 \
     --use_prior false \
     --visualize True
 ```
@@ -113,7 +120,7 @@ bash run_single_sequence.sh \
     --hand_pixels "470,964,1152,864" \
     --prompt "box" \
     --sfm vggsfm \
-    --window 300 \ 
+    --window 15 \ 
     --use_prior true \
     --visualize True 
 ```

@@ -32,8 +32,8 @@ def colmap_pose_est(seq_name, num_pairs=50, window_size=100):
     sfm_dir = outputs 
     features = outputs / "features.h5"
     retrieval_conf = extract_features.confs["netvlad"]
-    # feature_conf = extract_features.confs["superpoint_aachen"]
-    feature_conf = extract_features.confs["superpoint_max"]
+    feature_conf = extract_features.confs["superpoint_aachen"]
+    # feature_conf = extract_features.confs["superpoint_max"]
     feature_conf = {
         'output': 'feats-superpoint-n8000-rmax2500',
         'model': {

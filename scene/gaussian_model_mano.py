@@ -478,7 +478,6 @@ class GaussianModelMano:
         with torch.no_grad():
             num_object_gaussians = int(object_gaussians_mask.sum().item())
             self.transforms_image[object_gaussians_mask] = torch.eye(4, device=self.transforms_image.device).unsqueeze(0).repeat(num_object_gaussians, 1, 1)
-
         self.transforms_image_quat = matrix_to_quaternion(self.transforms_image[:, :3, :3])
         
         self.is_grasping = False
@@ -533,9 +532,7 @@ class GaussianModelMano:
             # Compute the hand center using the binding
             # self.object_center = torch.mean(xyz[self.binding == self.identity_binding_index], dim=0, keepdim=True)
             # self.hand_center = torch.mean(xyz[self.binding != self.identity_binding_index], dim=0, keepdim=True)
-
             return xyz
-        
         return self._xyz
     
     def get_gaussians_rotation(self):
@@ -822,15 +819,16 @@ class GaussianModelMano:
     # MANO Stuff
     def load_mano_params(self, path, side="right"):
         # replace {side}_transformations.pth with pose_params_{side}.pt
-        pose_path = path.replace(f"{side}_transformations.pth", f"pose_params_{side}_final.pt")
+        pose_path = path.replace(f"{side}_transformations.pth", f"pose_params_{side}.pt")
         mano_pose_param = torch.load(str(pose_path)).float().cuda()#.requires_grad_()
         mano_pose_param = mano_pose_param.clone().detach().requires_grad_()#.cuda()
         num_frames = mano_pose_param.shape[0]
 
-        shape_path = path.replace(f"{side}_transformations.pth", f"shape_params_right_final.pt") # The same shape params for both hands
-        shape_param = torch.load(str(shape_path)).float().cuda()#.requires_grad_()
+        shape_path = path.replace(f"{side}_transformations.pth", f"shape_params_right.pt") # The same shape params for both hands
+        shape_param = torch.load(str(shape_path)).float().cuda()[:1]#.requires_grad_()
         shape_param_init = shape_param.clone().detach()
         shape_param = shape_param.clone().detach().requires_grad_()#.cuda()
+        # print(shape_param.shape)
 
         transl_path = path.replace(f"transformations", f"translations")
         transl = torch.load(str(transl_path)).reshape(-1, 3).float().cuda()#.requires_grad_()
@@ -859,16 +857,17 @@ class GaussianModelMano:
         num_frames = self.transforms.shape[0]
         deformed_verts, _ = self.mano_layer(self._pose_params, self._shape_params.repeat(num_frames, 1), self._transl)
         deformed_verts = deformed_verts / self.scale_factor  # Canonical (flat) hand vertices
-
         transformations = compute_face_transformation_optimized_batched(self.canonical_verts, deformed_verts, self.faces)
 
         if self.optimize_left:
             deformed_verts_left, _ = self.mano_layer(self._pose_params_left, self._shape_params.repeat(num_frames, 1), self._transl_left)
             deformed_verts_left[:, :, 0] = -deformed_verts_left[:, :, 0]  # Mirror the canonical hand for left hand
             deformed_verts_left = deformed_verts_left / self.scale_factor  # Canonical (flat) left hand vertices
+            # faces_left = self.faces[:, [2, 1, 0]]  
             transformations_left = compute_face_transformation_optimized_batched(self.canonical_verts_left, deformed_verts_left, self.faces)
             transformations = torch.cat((transformations, transformations_left), dim=1)  # [T, F*2, 4, 4]
 
+        # print(transformations)
         identity = torch.eye(4, device="cuda").unsqueeze(0).repeat(num_frames, 1, 1).unsqueeze(1)
 
         # compare this with old transforms

@@ -305,7 +305,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         gaussians._features_dc.grad[object_gaussians_mask] = 0 #don't change features
                         gaussians._features_rest.grad[object_gaussians_mask] = 0 #don't change features
                         # gaussians._opacity.grad[object_gaussians_mask] = 0 #don't change features
-
                         if opt.disable_hand_psr:
                             print("[TRAIN] Disabling hand geometry optimization")
                             gaussians._xyz.grad[:] = 0#don't change position
