@@ -40,9 +40,8 @@ class Scene:
 
         self.train_cameras = {}
         self.test_cameras = {}
-
+        print(os.path.exists(os.path.join(args.source_path, "sfm_rescaled")), args.images)
         if os.path.exists(os.path.join(args.source_path, "sfm_rescaled")) and args.images != "hand_rgba":
-            # print(args.source_path, args.images)
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, bkg_images=args.background_ignore_mask)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("[SCENE] Found transforms_train.json file, assuming Blender data set!")

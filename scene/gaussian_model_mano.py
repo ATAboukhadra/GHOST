@@ -863,8 +863,8 @@ class GaussianModelMano:
             deformed_verts_left, _ = self.mano_layer(self._pose_params_left, self._shape_params.repeat(num_frames, 1), self._transl_left)
             deformed_verts_left[:, :, 0] = -deformed_verts_left[:, :, 0]  # Mirror the canonical hand for left hand
             deformed_verts_left = deformed_verts_left / self.scale_factor  # Canonical (flat) left hand vertices
-            # faces_left = self.faces[:, [2, 1, 0]]  
-            transformations_left = compute_face_transformation_optimized_batched(self.canonical_verts_left, deformed_verts_left, self.faces)
+            faces_left = self.faces[:, [2, 1, 0]]  
+            transformations_left = compute_face_transformation_optimized_batched(self.canonical_verts_left, deformed_verts_left, faces_left)
             transformations = torch.cat((transformations, transformations_left), dim=1)  # [T, F*2, 4, 4]
 
         # print(transformations)

@@ -79,7 +79,7 @@ echo "2️⃣  Structure-from-Motion"
 # if [[ "$SFM_METHOD" == "vggsfm" ]]; then
 #     echo " - Using VGG-SfM"
 #     python vggsfm_video.py SCENE_DIR=../data/"$SEQ" init_window_size=$WINDOW_SIZE window_size=$WINDOW_SIZE \
-#                         camera_type="SIMPLE_PINHOLE" query_method="sp+sift" #max_query_pts=512
+#                         camera_type="SIMPLE_PINHOLE" query_method="sp+sift" #max_query_pts=2048
 # else
 #     echo " - Using HLOC with sliding window: $WINDOW_SIZE"
 #     python hloc_colmap_sfm.py  --seq_name "$SEQ" --num_pairs 50 --window_size $WINDOW_SIZE
