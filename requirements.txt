@@ -1,30 +1,32 @@
-sympy==1.13.1
-colorama
-huggingface_hub
--e submodules/sam2
-omegaconf 
-opencv-python-headless
-einops 
-visdom 
-tqdm 
-scipy 
-plotly 
-scikit-learn 
-imageio[ffmpeg] 
-gradio 
-trimesh
--e submodules/lightglue
-pycolmap==3.10.0 
-pyceres==2.3
-poselib==2.0.2
--e submodules/vggsfm
--e submodules/hloc
-rtmlib==0.0.12
-onnxruntime-gpu
--e submodules/hamer
-PyOpenGL
-PyOpenGL_accelerate
-dgl -f https://data.dgl.ai/wheels/torch-2.6/cu124/repo.html
--e submodules/openshape
-open3d
-numpy==1.26.3
+# sympy==1.13.1
+# colorama
+# huggingface_hub
+# -e submodules/sam2
+# omegaconf 
+# opencv-python-headless
+# einops 
+# visdom 
+# tqdm 
+# scipy 
+# plotly 
+# scikit-learn 
+# imageio[ffmpeg] 
+# gradio 
+# trimesh
+# -e submodules/lightglue
+# pycolmap==3.10.0 
+# pyceres==2.3
+# poselib==2.0.2
+# -e submodules/vggsfm
+# -e submodules/hloc
+# rtmlib==0.0.12
+# onnxruntime-gpu
+# -e submodules/hamer
+# PyOpenGL
+# PyOpenGL_accelerate
+# dgl -f https://data.dgl.ai/wheels/torch-2.6/cu124/repo.html
+# -e submodules/openshape
+# open3d
+# numpy==1.26.3
+# dearpygui
+tyro
