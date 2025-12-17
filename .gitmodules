@@ -28,3 +28,6 @@
 [submodule "submodules/manopth"]
 	path = submodules/manopth
 	url = https://github.com/hassony2/manopth
+[submodule "submodules/hold"]
+	path = submodules/hold
+	url = https://github.com/zc-alexfan/hold
