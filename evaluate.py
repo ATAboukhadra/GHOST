@@ -3,7 +3,7 @@ import cv2
 import torch
 import numpy as np
 from tqdm import tqdm
-from utils.metric_utils import Evaluator  # assumes your class is saved as evaluator.py
+from utils.metric_utils import Evaluator 
 
 def load_rgba_image(path):
     """Load image as float32 normalized to [0,1]."""
