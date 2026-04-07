@@ -222,7 +222,7 @@ If you find this work useful, please cite:
 @inproceedings{aboukhadra2026ghost,
   title     = {GHOST: Fast Category-agnostic Hand-Object Interaction Reconstruction from RGB Videos using Gaussian Splatting},
   author    = {Aboukhadra, Ahmed Tawfik and Rogge, Marcel and Robertini, Nadia and Arafa, Abdalla and Malik, Jameel and Elhayek, Ahmed and Stricker, Didier},
-  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Findings},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition- FINDINGS Track (CVPRF)},
   year      = {2026}
 }
 ```
