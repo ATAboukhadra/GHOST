@@ -222,7 +222,7 @@ If you find this work useful, please cite:
 @inproceedings{aboukhadra2026ghost,
   title     = {GHOST: Fast Category-agnostic Hand-Object Interaction Reconstruction from RGB Videos using Gaussian Splatting},
   author    = {Aboukhadra, Ahmed Tawfik and Rogge, Marcel and Robertini, Nadia and Arafa, Abdalla and Malik, Jameel and Elhayek, Ahmed and Stricker, Didier},
-  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Findings},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition- FINDINGS Track (CVPRF)},
   year      = {2026}
 }
 ```
@@ -232,3 +232,7 @@ If you find this work useful, please cite:
 We thank the following projects for their open-source code:
 [2d-gaussian-splatting](https://github.com/hbb1/2d-gaussian-splatting), [HOLD](https://github.com/zc-alexfan/hold), [GaussianAvatars](https://github.com/ShenhanQian/GaussianAvatars)
 and all the other listed submodules.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=ATAboukhadra/GHOST&type=date&legend=top-left)](https://www.star-history.com/?repos=ATAboukhadra%2FGHOST&type=date&legend=top-left)
