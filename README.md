@@ -1,6 +1,6 @@
 # GHOST: Fast Category-agnostic Hand-Object Interaction Reconstruction from RGB Videos using Gaussian Splatting
 
-### [Project Page](https://ataboukhadra.github.io/ghost/) | [Paper](https://arxiv.org/abs/2603.18912)
+### [Project Page](https://ataboukhadra.github.io/ghost/) | [Paper](https://openaccess.thecvf.com/content/CVPR2026F/html/Aboukhadra_GHOST_Fast_Category-Agnostic_Hand-Object_Interaction_Reconstruction_from_RGB_Videos_Using_CVPRF_2026_paper.html) | [arXiv](https://arxiv.org/abs/2603.18912)
 
 **CVPR Findings 2026**
 
@@ -219,11 +219,13 @@ sed -i '122s|model_path="./body_models",|model_path="../../../preprocess/_DATA/d
 If you find this work useful, please cite:
 
 ```bibtex
-@inproceedings{aboukhadra2026ghost,
-  title     = {GHOST: Fast Category-agnostic Hand-Object Interaction Reconstruction from RGB Videos using Gaussian Splatting},
-  author    = {Aboukhadra, Ahmed Tawfik and Rogge, Marcel and Robertini, Nadia and Arafa, Abdalla and Malik, Jameel and Elhayek, Ahmed and Stricker, Didier},
-  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition- FINDINGS Track (CVPRF)},
-  year      = {2026}
+@InProceedings{Aboukhadra_2026_CVPR,
+    author    = {Aboukhadra, Ahmed Tawfik and Rogge, Marcel and Robertini, Nadia and Arafa, Abdalla and Malik, Jameel and Elhayek, Ahmed and Stricker, Didier},
+    title     = {GHOST: Fast Category-Agnostic Hand-Object Interaction Reconstruction from RGB Videos Using Gaussian Splatting},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Findings},
+    month     = {June},
+    year      = {2026},
+    pages     = {3394-3404}
 }
 ```
 
