@@ -214,6 +214,11 @@ bash scripts/mv_arctic_data.bash
 sed -i '122s|model_path="./body_models",|model_path="../../../preprocess/_DATA/data/mano/",|' submodules/hold/code/src/model/mano/server.py
 ```
 
+## Data
+
+We have recorded 5 sequences using a GoPro camera. The sequences contain right-hand interaction with 4 diverse objects (Book, Drill, Toy, Box) recorded by 3 subjects (2 males and 1 female). An additional sequence includes only a recording of a right hand of one of the subjects.
+The data can be found on [HuggingFace](https://huggingface.co/datasets/ahmedtawfik/dfki-av-gopro-hand-object/tree/main)
+
 ## Citation
 
 If you find this work useful, please cite:
